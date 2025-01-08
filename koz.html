@@ -143,7 +143,7 @@
       let clicks;
 
       async function fetchClicks() {
-        const response = await fetch("http://koz.fly.io/clicks");
+        const response = await fetch("http://koz.fly.dev/clicks");
         clicks = await response.json();
       }
 
@@ -196,7 +196,7 @@
         }
 
         // Send click data to the server
-        const response = await fetch("http://koz.fly.io/clicks", {
+        const response = await fetch("http://koz.fly.dev/clicks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ x, y, width, height, userId }),
