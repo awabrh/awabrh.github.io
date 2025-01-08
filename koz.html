@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <head>
+    <title>Click Heatmap Demo</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        background: #f0f0f0;
+        font-family: Arial, sans-serif;
+      }
+      .demo-wrapper {
+        position: relative;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        width: 100%;
+        max-width: 400px;
+        aspect-ratio: 1;
+        margin: 0 auto;
+        overflow: hidden;
+      }
+      .heatmap {
+        width: 100%;
+        height: 100%;
+      }
+      .instructions {
+        text-align: center;
+        margin-bottom: 20px;
+        color: #333;
+      }
+      .koz {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10;
+      }
+
+      .overlay-content {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+      }
+
+      .overlay-content p {
+        margin-bottom: 10px;
+        font-size: 16px;
+      }
+
+      .overlay-content button {
+        padding: 10px 20px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .overlay-content button:hover {
+        background: #0056b3;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="instructions">
+      <h2>Sudanese Roulette</h2>
+      <p>
+        وجدت الكوز ادناه في مكان عام وتريد ان تشرب منه <br />
+        لكي تقلل فرصك في التقاط الجراثيم عليك ان تشرب من اقل مكان يشرب منه
+        الاخرين ، من اين ستشرب ؟
+      </p>
+    </div>
+    <div class="demo-wrapper">
+      <div class="overlay">
+        <div class="overlay-content">
+          <p>رجاء اضغط مرة واحدة في الكوز لكي تسجل اختيارك.</p>
+          <button id="dismiss-overlay">فهمت</button>
+        </div>
+      </div>
+      <div class="heatmap"><img class="koz" src="assets/img/koz.png" /></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/heatmap.js/2.0.2/heatmap.min.js"></script>
+    <script>
+      document
+        .getElementById("dismiss-overlay")
+        .addEventListener("click", function () {
+          document.querySelector(".overlay").style.display = "none";
+        });
+
+      // Initialize heatmap instance
+      var heatmapInstance = h337.create({
+        container: document.querySelector(".heatmap"),
+        radius: 45,
+        maxOpacity: 0.6,
+        minOpacity: 0,
+        blur: 0.75,
+        gradient: {
+          ".5": "blue",
+          ".6": "green",
+          ".8": "yellow",
+          ".95": "red",
+        },
+      });
+
+      var userInstance = h337.create({
+        container: document.querySelector(".heatmap"),
+        radius: 20,
+        maxOpacity: 0.9,
+        minOpacity: 0,
+        blur: 0.1,
+        gradient: {
+          ".4": "black",
+          ".6": "green",
+        },
+      });
+
+      function getOrCreateUserId() {
+        let userId = localStorage.getItem("heatmap_user_id");
+        if (!userId) {
+          userId = crypto.randomUUID(); // Generates a unique ID
+          localStorage.setItem("heatmap_user_id", userId);
+        }
+        return userId;
+      }
+
+      let clicks;
+
+      async function fetchClicks() {
+        const response = await fetch("http://localhost:3000/clicks");
+        clicks = await response.json();
+      }
+
+      // Fetch existing clicks and render them
+      async function renderClicks() {
+        const heatmapContainer = document.querySelector(".demo-wrapper");
+        const rect = heatmapContainer.getBoundingClientRect();
+        const width = rect.width;
+        const height = rect.height;
+
+        clicks.forEach((click) => {
+          if (click.userId == userId) {
+            userInstance.addData({
+              x: Math.round(click.x * width),
+              y: Math.round(click.y * height),
+              value: 1,
+            });
+          } else {
+            heatmapInstance.addData({
+              x: Math.round(click.x * width),
+              y: Math.round(click.y * height),
+              value: 1,
+            });
+          }
+        });
+      }
+
+      if (localStorage.getItem("show_clicks") == "true") {
+        document.querySelector(".overlay").style.display = "none";
+      }
+
+      fetchClicks().then(() => {
+        if (localStorage.getItem("show_clicks") == "true") {
+          renderClicks();
+        }
+      });
+      let userId = getOrCreateUserId();
+
+      // Add click handler to wrapper
+      document.querySelector(".heatmap").onclick = async function (ev) {
+        // Get click coordinates relative to the element
+        var rect = ev.target.getBoundingClientRect();
+        var x = ev.clientX - rect.left;
+        var y = ev.clientY - rect.top;
+
+        var width = rect.width;
+        var height = rect.height;
+        if (localStorage.getItem("show_clicks") != "true") {
+          renderClicks();
+        }
+
+        // Send click data to the server
+        const response = await fetch("http://localhost:3000/clicks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ x, y, width, height, userId }),
+        });
+
+        if (response.ok) {
+          // Add data point to heatmap
+          localStorage.setItem("show_clicks", "true");
+          userInstance.addData({
+            x: Math.round(x),
+            y: Math.round(y),
+            value: 1,
+          });
+        }
+      };
+    </script>
+  </body>
+</html>
