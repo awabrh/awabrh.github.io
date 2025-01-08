@@ -53,6 +53,7 @@
         background: white;
         padding: 20px;
         border-radius: 8px;
+        max-width: 80%;
         text-align: center;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
       }
@@ -88,7 +89,7 @@
     <div class="demo-wrapper">
       <div class="overlay">
         <div class="overlay-content">
-          <p>رجاء اضغط مرة واحدة في الكوز لكي تسجل اختيارك.</p>
+          <p>رجاء اضغط مرة واحدة في المكان الذي ستشرب منه لكي تسجل اختيارك</p>
           <button id="dismiss-overlay">فهمت</button>
         </div>
       </div>
@@ -142,7 +143,7 @@
       let clicks;
 
       async function fetchClicks() {
-        const response = await fetch("http://localhost:3000/clicks");
+        const response = await fetch("http://koz.fly.io/clicks");
         clicks = await response.json();
       }
 
@@ -195,7 +196,7 @@
         }
 
         // Send click data to the server
-        const response = await fetch("http://localhost:3000/clicks", {
+        const response = await fetch("http://koz.fly.io/clicks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ x, y, width, height, userId }),
