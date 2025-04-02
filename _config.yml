@@ -1,6 +1,7 @@
-title: Minimal theme
+title: awabrh
 logo: /assets/img/logo.png
-description: Minimal is a theme for GitHub Pages.
+description: My personal blog
 show_downloads: true
 google_analytics:
+author: Awab Rhamtallah
 theme: jekyll-theme-minimal
