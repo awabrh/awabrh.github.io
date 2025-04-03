@@ -36,7 +36,7 @@
       }
     </style>
   </head>
-  <body>
+  <body class="{% if page.lang == 'ar' %}rtl{% endif %}">
     <header>
       <h1><a href="{{ '/' | relative_url }}">{{ site.title }}</a></h1>
       <nav>
