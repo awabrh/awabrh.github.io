@@ -1,7 +1,7 @@
 ---
 layout: post
 title: "السنين اقرب مما تبدو في المرآة"
-date: 2025-04-04
+date: 2025-04-03
 lang: ar
 categories: blog
 ---
