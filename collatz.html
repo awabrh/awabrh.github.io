@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collatz Graph</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a2e;
+            font-family: 'Inter', sans-serif;
+            color: white;
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none; /* Prevent default touch behavior on canvas */
+            cursor: grab;
+        }
+
+        #controlPanel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(30, 30, 50, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            transform: translateX(-120%);
+            transition: transform 0.3s ease-in-out;
+            z-index: 10;
+        }
+
+        #controlPanel.visible {
+            transform: translateX(0);
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        input[type="number"], select {
+            background: #2a2a44;
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: white;
+            padding: 8px;
+            font-size: 14px;
+            width: 200px;
+        }
+
+        button {
+            background: #6a1b9a;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        button:hover {
+            background: #7b24b2;
+            transform: translateY(-1px);
+        }
+
+        #toggleBtn {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            background: #2a2a44;
+            z-index: 20;
+            border: 1px solid #444;
+            cursor: pointer;
+        }
+
+        #ruleDescription {
+            font-size: 12px;
+            color: #999;
+            line-height: 1.4;
+            border-top: 1px solid #444;
+            padding-top: 10px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div id="toggleBtn">⚙️</div>
+
+    <div id="controlPanel">
+        <div class="control-group">
+            <label for="startNode">Start Number</label>
+            <input type="number" id="startNode" value="1">
+        </div>
+        <div class="control-group">
+            <label for="modBase">Modulus Base (for color)</label>
+            <input type="number" id="modBase" value="3" min="2">
+        </div>
+        <div class="control-group">
+            <label for="ruleSet">Rule Set</label>
+            <select id="ruleSet">
+                <option value="negative">Inverse Negative Collatz</option>
+                <option value="positive">Inverse Positive Collatz</option>
+            </select>
+        </div>
+        <div id="ruleDescription"></div>
+        <div class="button-group">
+            <button id="resetBtn">Reset Graph</button>
+            <button id="centerBtn">Center View</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const controlPanel = document.getElementById('controlPanel');
+        const toggleBtn = document.getElementById('toggleBtn');
+        const modBaseInput = document.getElementById('modBase');
+        const startNodeInput = document.getElementById('startNode');
+        const ruleSetSelect = document.getElementById('ruleSet');
+        const ruleDescriptionDiv = document.getElementById('ruleDescription');
+        const resetBtn = document.getElementById('resetBtn');
+        const centerBtn = document.getElementById('centerBtn');
+
+        // Set canvas size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Graph state
+        let graphs = [];
+        let currentGraphId = -1;
+        let modBase = 3;
+
+        // Camera state
+        let camera = {
+            x: 0,
+            y: 0,
+            zoom: 1
+        };
+
+        // Interaction state
+        let isDragging = false;
+        let lastMousePos = { x: 0, y: 0 };
+        let draggedNode = null;
+        let dragStart = { x: 0, y: 0 };
+        let mousedownPos = { x: 0, y: 0 };
+        const dragTolerance = 5; // Pixels to distinguish click from drag
+        
+        // Touch interaction state
+        let touchStartDist = 0;
+        let lastTouchPos = null;
+
+        // Control panel state
+        let controlsVisible = false;
+
+        // Node class
+        class Node {
+            constructor(value, x, y, parentId = null, graphId) {
+                const currentGraph = graphs.find(g => g.id === graphId);
+                this.id = currentGraph.nodeIdCounter++;
+                this.graphId = graphId;
+                this.value = value;
+                this.x = x;
+                this.y = y;
+                this.vx = 0; // velocity for physics simulation
+                this.vy = 0;
+                this.radius = 30;
+                this.parentId = parentId;
+                this.children = [];
+                this.updateColor();
+                this.expanded = false;
+                this.pinned = false; // for physics simulation
+            }
+
+            updateColor() {
+                const currentGraph = graphs.find(g => g.id === this.graphId);
+                let colors;
+                if (currentGraph.ruleSet === 'negative') {
+                    colors = {
+                        mod3: '#FF9800', // orange
+                        even: '#2196F3', // blue
+                        odd: '#F44336' // red
+                    };
+                } else {
+                    colors = {
+                        mod3: '#9E9E9E', // grey
+                        even: '#4CAF50', // green
+                        odd: '#9C27B0' // purple
+                    };
+                }
+                
+                this.modValue = this.value % modBase; // for display only
+
+                if (this.value % 3 === 0 && this.value !== 0) {
+                    this.color = colors.mod3; 
+                } else if (this.value % 2 === 0) {
+                    this.color = colors.even;
+                } else {
+                    this.color = colors.odd;
+                }
+            }
+
+            // Apply forces for layout
+            applyForces() {
+                if (this.pinned) return;
+
+                const damping = 0.9;
+                const maxVelocity = 5;
+
+                const currentGraph = graphs.find(g => g.id === this.graphId);
+                if (!currentGraph) return;
+
+                // Apply repulsion from other nodes in the same graph
+                currentGraph.nodes.forEach(other => {
+                    if (other.id === this.id) return;
+
+                    const dx = this.x - other.x;
+                    const dy = this.y - other.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < 100 && distance > 0) {
+                        const force = (100 - distance) / distance;
+                        const fx = (dx / distance) * force * 0.5;
+                        const fy = (dy / distance) * force * 0.5;
+
+                        this.vx += fx;
+                        this.vy += fy;
+                    }
+                });
+
+                // Apply attraction to connected nodes (spring force)
+                currentGraph.edges.forEach(edge => {
+                    let other = null;
+                    let targetDistance = 120;
+
+                    if (edge.from === this.id) {
+                        other = currentGraph.nodes.find(n => n.id === edge.to);
+                    } else if (edge.to === this.id) {
+                        other = currentGraph.nodes.find(n => n.id === edge.from);
+                    }
+
+                    if (other) {
+                        const dx = other.x - this.x;
+                        const dy = other.y - this.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+
+                        if (distance > 0) {
+                            const force = (distance - targetDistance) * 0.1;
+                            const fx = (dx / distance) * force;
+                            const fy = (dy / distance) * force;
+
+                            this.vx += fx;
+                            this.vy += fy;
+                        }
+                    }
+                });
+
+                // Apply damping
+                this.vx *= damping;
+                this.vy *= damping;
+
+                // Limit velocity
+                const velocity = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                if (velocity > maxVelocity) {
+                    this.vx = (this.vx / velocity) * maxVelocity;
+                    this.vy = (this.vy / velocity) * maxVelocity;
+                }
+
+                // Update position
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                const screenPos = worldToScreen(this.x, this.y);
+
+                // Skip if outside visible area
+                if (screenPos.x < -this.radius || screenPos.x > canvas.width + this.radius ||
+                    screenPos.y < -this.radius || screenPos.y > canvas.height + this.radius) {
+                    return;
+                }
+
+                const scaledRadius = this.radius * camera.zoom;
+
+                // Draw glow effect
+                const gradient = ctx.createRadialGradient(
+                    screenPos.x, screenPos.y, 0,
+                    screenPos.x, screenPos.y, scaledRadius * 1.5
+                );
+                gradient.addColorStop(0, this.color + '40');
+                gradient.addColorStop(1, 'transparent');
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(screenPos.x, screenPos.y, scaledRadius * 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw main circle
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(screenPos.x, screenPos.y, scaledRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Draw border
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Draw text
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${Math.max(12, 16 * camera.zoom)}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // Draw main number
+                ctx.fillText(this.value.toString(), screenPos.x, screenPos.y - 5 * camera.zoom);
+
+                // Draw mod value
+                ctx.font = `${Math.max(8, 10 * camera.zoom)}px Arial`;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.fillText(`mod${modBase}: ${this.modValue}`, screenPos.x, screenPos.y + 8 * camera.zoom);
+            }
+
+            contains(worldX, worldY) {
+                const dx = worldX - this.x;
+                const dy = worldY - this.y;
+                return dx * dx + dy * dy <= this.radius * this.radius;
+            }
+
+            expand() {
+                if (this.expanded) return;
+
+                const distance = 120;
+                let childValues = [];
+
+                // Apply the selected rule set
+                const currentGraph = graphs.find(g => g.id === this.graphId);
+                const currentRuleSet = currentGraph.ruleSet;
+                
+                if (currentRuleSet === 'negative') {
+                    // Inverse Negative Collatz
+                    if (this.value % 2 === 1) {
+                        childValues.push(this.value * 2);
+                    } else {
+                        if (this.value % 3 === 0) {
+                            childValues.push(this.value * 2);
+                        } else if (this.value % 3 === 1) {
+                            childValues.push(this.value * 2);
+                        } else if (this.value % 3 === 2) {
+                            childValues.push(this.value * 2);
+                            if (Number.isInteger((this.value + 1) / 3)) {
+                                childValues.push((this.value + 1) / 3);
+                            }
+                        }
+                    }
+                } else if (currentRuleSet === 'positive') {
+                    // Inverse Positive Collatz
+                    childValues.push(this.value * 2); 
+                    if (this.value % 2 === 0 && (this.value % 3 === 1) && this.value > 1) {
+                        if (Number.isInteger((this.value - 1) / 3) && (this.value - 1) / 3 > 0) {
+                            childValues.push((this.value - 1) / 3);
+                        }
+                    }
+                }
+                
+                // Create or connect to existing nodes
+                childValues.forEach((value, index) => {
+                    const existingNode = currentGraph.nodes.find(node => node.value === value);
+
+                    if (existingNode) {
+                        this.children.push(existingNode.id);
+                        const edgeExists = currentGraph.edges.some(edge =>
+                            (edge.from === this.id && edge.to === existingNode.id) ||
+                            (edge.from === existingNode.id && edge.to === this.id)
+                        );
+                        if (!edgeExists) {
+                            currentGraph.edges.push({ from: this.id, to: existingNode.id });
+                        }
+                    } else {
+                        let x, y;
+                        if (childValues.length === 1) {
+                            x = this.x + (Math.random() - 0.5) * 50;
+                            y = this.y + distance + (Math.random() - 0.5) * 30;
+                        } else {
+                            const angleOffset = Math.PI / 4 + (Math.random() - 0.5) * 0.5;
+                            const spreadDistance = distance + (Math.random() - 0.5) * 40;
+                            x = this.x + (index === 0 ? -1 : 1) * Math.cos(angleOffset) * spreadDistance;
+                            y = this.y + Math.sin(angleOffset) * spreadDistance;
+                        }
+
+                        const newNode = new Node(value, x, y, this.id, this.graphId);
+                        this.children.push(newNode.id);
+                        currentGraph.nodes.push(newNode);
+                        currentGraph.edges.push({ from: this.id, to: newNode.id });
+                    }
+                });
+
+                this.expanded = true;
+            }
+        }
+
+        // Delete node function
+        function deleteNodeAndChildren(nodeId, graphId) {
+            const currentGraph = graphs.find(g => g.id === graphId);
+            if (!currentGraph) return;
+
+            const nodeToDelete = currentGraph.nodes.find(n => n.id === nodeId);
+            if (!nodeToDelete) return;
+
+            const toDelete = new Set();
+            const stack = [nodeId];
+
+            while (stack.length > 0) {
+                const currentId = stack.pop();
+                if (toDelete.has(currentId)) continue;
+
+                toDelete.add(currentId);
+                const currentNode = currentGraph.nodes.find(n => n.id === currentId);
+                if (currentNode) {
+                    currentNode.children.forEach(childId => {
+                        if (!toDelete.has(childId)) {
+                            stack.push(childId);
+                        }
+                    });
+                }
+            }
+
+            const parent = currentGraph.nodes.find(n => n.id === nodeToDelete.parentId);
+            if (parent) {
+                parent.expanded = false;
+            }
+
+            currentGraph.nodes = currentGraph.nodes.filter(node => !toDelete.has(node.id));
+
+            currentGraph.edges = currentGraph.edges.filter(edge =>
+                !toDelete.has(edge.from) && !toDelete.has(edge.to)
+            );
+
+            currentGraph.nodes.forEach(node => {
+                node.children = node.children.filter(childId => !toDelete.has(childId));
+            });
+        }
+
+        // Coordinate conversion
+        function worldToScreen(worldX, worldY) {
+            return {
+                x: (worldX - camera.x) * camera.zoom + canvas.width / 2,
+                y: (worldY - camera.y) * camera.zoom + canvas.height / 2
+            };
+        }
+
+        function screenToWorld(screenX, screenY) {
+            return {
+                x: (screenX - canvas.width / 2) / camera.zoom + camera.x,
+                y: (screenY - canvas.height / 2) / camera.zoom + camera.y
+            };
+        }
+
+        // Drawing functions
+        function drawEdge(edge, graphId) {
+            const currentGraph = graphs.find(g => g.id === graphId);
+            if (!currentGraph) return;
+            
+            const fromNode = currentGraph.nodes.find(n => n.id === edge.from);
+            const toNode = currentGraph.nodes.find(n => n.id === edge.to);
+
+            if (!fromNode || !toNode) return;
+
+            const fromScreen = worldToScreen(fromNode.x, fromNode.y);
+            const toScreen = worldToScreen(toNode.x, toNode.y);
+
+            if ((fromScreen.x < -50 && toScreen.x < -50) ||
+                (fromScreen.x > canvas.width + 50 && toScreen.x > canvas.width + 50) ||
+                (fromScreen.y < -50 && toScreen.y < -50) ||
+                (fromScreen.y > canvas.height + 50 && toScreen.y > canvas.height + 50)) {
+                return;
+            }
+
+            const dx = toNode.x - fromNode.x;
+            const dy = toNode.y - fromNode.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance === 0) return;
+
+            const unitX = dx / distance;
+            const unitY = dy / distance;
+
+            const fromEdgeX = fromNode.x + unitX * fromNode.radius;
+            const fromEdgeY = fromNode.y + unitY * fromNode.radius;
+            const toEdgeX = toNode.x - unitX * toNode.radius;
+            const toEdgeY = toNode.y - unitY * toNode.radius;
+
+            const fromEdgeScreen = worldToScreen(fromEdgeX, fromEdgeY);
+            const toEdgeScreen = worldToScreen(toEdgeX, toEdgeY);
+
+            const gradient = ctx.createLinearGradient(
+                fromEdgeScreen.x, fromEdgeScreen.y,
+                toEdgeScreen.x, toEdgeScreen.y
+            );
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+            gradient.addColorStop(1, 'rgba(255, 255, 255, 0.3)');
+
+            ctx.strokeStyle = gradient;
+            ctx.lineWidth = 2 * camera.zoom;
+            ctx.beginPath();
+            ctx.moveTo(fromEdgeScreen.x, fromEdgeScreen.y);
+            ctx.lineTo(toEdgeScreen.x, toEdgeScreen.y);
+            ctx.stroke();
+        }
+
+        function draw() {
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            drawGrid();
+
+            graphs.forEach(graph => {
+                graph.edges.forEach(edge => drawEdge(edge, graph.id));
+            });
+
+            graphs.forEach(graph => {
+                graph.nodes.forEach(node => node.draw());
+            });
+        }
+
+        function drawGrid() {
+            const gridSize = 50;
+            const screenGridSize = gridSize * camera.zoom;
+            if (screenGridSize < 10) return;
+
+            const offsetX = (-camera.x * camera.zoom + canvas.width / 2) % screenGridSize;
+            const offsetY = (-camera.y * camera.zoom + canvas.height / 2) % screenGridSize;
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.lineWidth = 1;
+
+            for (let x = offsetX; x < canvas.width; x += screenGridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+
+            for (let y = offsetY; y < canvas.height; y += screenGridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            graphs.forEach(graph => {
+                graph.nodes.forEach(node => node.applyForces());
+            });
+            draw();
+        }
+
+        function initializeGraphs() {
+            graphs = [
+                { id: 0, nodes: [], edges: [], nodeIdCounter: 0, ruleSet: 'negative' },
+                { id: 1, nodes: [], edges: [], nodeIdCounter: 0, ruleSet: 'positive' }
+            ];
+            currentGraphId = 0;
+            ruleSetSelect.value = graphs[0].ruleSet;
+            updateRuleDescription();
+        }
+
+        // Event listeners
+        canvas.addEventListener('mousedown', (e) => {
+            const worldPos = screenToWorld(e.offsetX, e.offsetY);
+            let clickedNode = null;
+            let clickedGraph = null;
+
+            for (const graph of graphs) {
+                clickedNode = graph.nodes.find(node => node.contains(worldPos.x, worldPos.y));
+                if (clickedNode) {
+                    clickedGraph = graph;
+                    break;
+                }
+            }
+
+            if (e.button === 0) { // Left click
+                mousedownPos = { x: e.offsetX, y: e.offsetY };
+                if (clickedNode) {
+                    draggedNode = clickedNode;
+                    draggedNode.pinned = true;
+                    dragStart = { x: draggedNode.x - worldPos.x, y: draggedNode.y - worldPos.y };
+                } else {
+                    isDragging = true;
+                    lastMousePos = { x: e.offsetX, y: e.offsetY };
+                }
+            } else if (e.button === 2) { // Right click
+                if (clickedNode) {
+                    deleteNodeAndChildren(clickedNode.id, clickedGraph.id);
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (draggedNode) {
+                const worldPos = screenToWorld(e.offsetX, e.offsetY);
+                draggedNode.x = worldPos.x + dragStart.x;
+                draggedNode.y = worldPos.y + dragStart.y;
+            } else if (isDragging) {
+                const dx = e.offsetX - lastMousePos.x;
+                const dy = e.offsetY - lastMousePos.y;
+                camera.x -= dx / camera.zoom;
+                camera.y -= dy / camera.zoom;
+                lastMousePos = { x: e.offsetX, y: e.offsetY };
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            const worldPos = screenToWorld(e.offsetX, e.offsetY);
+            let clickedNode = null;
+            let clickedGraph = null;
+
+            for (const graph of graphs) {
+                clickedNode = graph.nodes.find(node => node.contains(worldPos.x, worldPos.y));
+                if (clickedNode) {
+                    clickedGraph = graph;
+                    break;
+                }
+            }
+
+            isDragging = false;
+            
+            if (draggedNode) {
+                const dragDistance = Math.hypot(e.offsetX - mousedownPos.x, e.offsetY - mousedownPos.y);
+                const isClick = dragDistance < dragTolerance;
+                
+                if (isClick) {
+                    draggedNode.expand();
+                }
+
+                draggedNode.pinned = false;
+                draggedNode = null;
+            } else {
+                const dragDistance = Math.hypot(e.offsetX - mousedownPos.x, e.offsetY - mousedownPos.y);
+                const isClick = dragDistance < dragTolerance;
+
+                if (isClick && !clickedNode) {
+                    spawnNewNode(worldPos.x, worldPos.y);
+                }
+            }
+            
+            if (clickedNode && clickedGraph.id !== currentGraphId) {
+                currentGraphId = clickedGraph.id;
+                ruleSetSelect.value = clickedGraph.ruleSet;
+                updateRuleDescription();
+            }
+        });
+        
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const scaleFactor = e.deltaY > 0 ? 0.95 : 1.05;
+            const mouseWorldPos = screenToWorld(e.offsetX, e.offsetY);
+            camera.zoom *= scaleFactor;
+            const newMouseWorldPos = screenToWorld(e.offsetX, e.offsetY);
+            camera.x += mouseWorldPos.x - newMouseWorldPos.x;
+            camera.y += mouseWorldPos.y - newMouseWorldPos.y;
+        });
+        
+        // Touch events for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                const worldPos = screenToWorld(e.touches[0].clientX, e.touches[0].clientY);
+                let clickedNode = null;
+                for (const graph of graphs) {
+                    clickedNode = graph.nodes.find(node => node.contains(worldPos.x, worldPos.y));
+                    if (clickedNode) {
+                        break;
+                    }
+                }
+
+                if (clickedNode) {
+                    draggedNode = clickedNode;
+                    draggedNode.pinned = true;
+                    dragStart = { x: draggedNode.x - worldPos.x, y: draggedNode.y - worldPos.y };
+                }
+                lastTouchPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                touchStartDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1 && lastTouchPos) {
+                if (draggedNode) {
+                    const worldPos = screenToWorld(e.touches[0].clientX, e.touches[0].clientY);
+                    draggedNode.x = worldPos.x + dragStart.x;
+                    draggedNode.y = worldPos.y + dragStart.y;
+                } else {
+                    const dx = e.touches[0].clientX - lastTouchPos.x;
+                    const dy = e.touches[0].clientY - lastTouchPos.y;
+                    camera.x -= dx / camera.zoom;
+                    camera.y -= dy / camera.zoom;
+                }
+                lastTouchPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2 && touchStartDist) {
+                const touchEndDist = Math.hypot(
+                    e.touches[0].clientX - e.touches[1].clientX,
+                    e.touches[0].clientY - e.touches[1].clientY
+                );
+                const scaleFactor = touchEndDist / touchStartDist;
+                const centerScreenX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                const centerScreenY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                
+                const mouseWorldPos = screenToWorld(centerScreenX, centerScreenY);
+                camera.zoom *= scaleFactor;
+                const newMouseWorldPos = screenToWorld(centerScreenX, centerScreenY);
+                camera.x += mouseWorldPos.x - newMouseWorldPos.x;
+                camera.y += mouseWorldPos.y - newMouseWorldPos.y;
+
+                touchStartDist = touchEndDist;
+            }
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (draggedNode) {
+                draggedNode.pinned = false;
+                draggedNode = null;
+            }
+            lastTouchPos = null;
+            touchStartDist = 0;
+            
+            if (e.changedTouches.length === 1) {
+                const worldPos = screenToWorld(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+                let clickedNode = null;
+                let clickedGraph = null;
+                for (const graph of graphs) {
+                    clickedNode = graph.nodes.find(node => node.contains(worldPos.x, worldPos.y));
+                    if (clickedNode) {
+                        clickedGraph = graph;
+                        clickedNode.expand();
+                        break;
+                    }
+                }
+                if (!clickedNode) {
+                    spawnNewNode(worldPos.x, worldPos.y);
+                }
+
+                if (clickedNode && clickedGraph.id !== currentGraphId) {
+                    currentGraphId = clickedGraph.id;
+                    ruleSetSelect.value = clickedGraph.ruleSet;
+                    updateRuleDescription();
+                }
+            }
+        });
+
+        // UI Event Listeners
+        toggleBtn.addEventListener('click', () => {
+            controlsVisible = !controlsVisible;
+            controlPanel.classList.toggle('visible', controlsVisible);
+            toggleBtn.textContent = controlsVisible ? '✕' : '⚙️';
+        });
+
+        resetBtn.addEventListener('click', () => {
+            initializeGraphs();
+            centerView();
+        });
+
+        centerBtn.addEventListener('click', centerView);
+
+        modBaseInput.addEventListener('change', () => {
+            const newModBase = parseInt(modBaseInput.value);
+            if (!isNaN(newModBase) && newModBase >= 2) {
+                modBase = newModBase;
+                graphs.forEach(graph => {
+                    graph.nodes.forEach(node => {
+                        node.updateColor();
+                    });
+                });
+            }
+        });
+
+        ruleSetSelect.addEventListener('change', () => {
+            const newRuleSet = ruleSetSelect.value;
+            const currentGraph = graphs.find(g => g.id === currentGraphId);
+            if (currentGraph) {
+                currentGraph.ruleSet = newRuleSet;
+                currentGraph.nodes.forEach(node => {
+                    node.updateColor();
+                });
+            }
+            updateRuleDescription();
+        });
+
+        function updateRuleDescription() {
+            const currentRuleSet = ruleSetSelect.value;
+            if (currentRuleSet === 'negative') {
+                ruleDescriptionDiv.innerHTML = `
+                    Current: Inverse Negative Collatz<br>
+                    • If x odd: spawn 2x<br>
+                    • If x even & 0 mod 3: spawn 2x<br>
+                    • If x even & 1 mod 3: spawn 2x<br>
+                    • If x even & 2 mod 3: spawn 2x, (x+1)/3
+                `;
+            } else {
+                ruleDescriptionDiv.innerHTML = `
+                    Current: Inverse Positive Collatz<br>
+                    • Always spawn 2x<br>
+                    • If x even & 1 mod 3: spawn (x-1)/3
+                `;
+            }
+        }
+
+        function centerView() {
+            let totalX = 0;
+            let totalY = 0;
+            let count = 0;
+
+            graphs.forEach(graph => {
+                graph.nodes.forEach(node => {
+                    totalX += node.x;
+                    totalY += node.y;
+                    count++;
+                });
+            });
+
+            if (count > 0) {
+                camera.x = totalX / count;
+                camera.y = totalY / count;
+            } else {
+                camera.x = 0;
+                camera.y = 0;
+            }
+            camera.zoom = 1;
+        }
+
+        function spawnNewNode(x, y) {
+            const startValue = parseInt(startNodeInput.value);
+            const selectedRuleSet = ruleSetSelect.value;
+
+            let graphToUse = graphs.find(g => g.nodes.length === 0);
+            if (!graphToUse) {
+                graphToUse = graphs.find(g => g.ruleSet === selectedRuleSet);
+                if (!graphToUse) {
+                    graphToUse = { id: graphs.length, nodes: [], edges: [], nodeIdCounter: 0, ruleSet: selectedRuleSet };
+                    graphs.push(graphToUse);
+                }
+            } else {
+                graphToUse.ruleSet = selectedRuleSet;
+            }
+
+            currentGraphId = graphToUse.id;
+            
+            const newNode = new Node(startValue, x, y, null, graphToUse.id);
+            graphToUse.nodes.push(newNode);
+        }
+
+        // Start the application
+        initializeGraphs();
+        animate();
+    </script>
+</body>
+</html>
